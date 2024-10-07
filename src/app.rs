@@ -1,25 +1,84 @@
+use egui::Context;
+
+pub enum Timer {
+    Running {
+        dt: f32,
+        t0: f32,
+    },
+    Paused(f32),
+}
+
+fn time(ctx: &Context) -> f32 {
+    ctx.input(|i| i.time) as _
+}
+
+impl Timer {
+
+    fn new_running(ctx: &Context) -> Self {
+        Self::Running { dt: 0.0, t0: ctx.input(|i| i.time as _)
+        }
+    }
+
+    fn new_paused () -> Self { Self::Paused (0.0) }
+
+    fn toggle(&mut self, ctx: &Context) {
+        match *self {
+            Timer::Running { dt, t0 } => *self = Timer::Paused(dt + time(ctx) - t0),
+            Timer::Paused(dt) => *self = Timer::Running { dt, t0: time(ctx)  },
+        }
+    }
+
+    fn pause(&mut self, ctx: &Context) {
+        match *self {
+            Timer::Paused(_) => (),
+            Timer::Running { .. } => self.toggle(ctx),
+        }
+    }
+
+    fn resume(&mut self, ctx: &Context) {
+        match *self {
+            Timer::Running{..} => (),
+            Timer::Paused(_) => self.toggle(ctx),
+        }
+    }
+
+    fn elapsed(&self, ctx: &Context) -> f32 {
+        match *self {
+            Timer::Running { dt, t0 } =>  dt + time(ctx) - t0,
+            Timer::Paused (t) => t,
+        }
+    }
+
+
+}
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
+pub struct TTUmpire {
+
+    #[serde(skip)]
+    timer: Timer,
+
     // Example stuff:
     label: String,
 
     #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
+    value: u64,
 }
 
-impl Default for TemplateApp {
+impl Default for TTUmpire {
     fn default() -> Self {
         Self {
+            timer: Timer::new_paused(),
             // Example stuff:
             label: "Hello World!".to_owned(),
-            value: 2.7,
+            value: 270,
         }
     }
 }
 
-impl TemplateApp {
+impl TTUmpire {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -31,11 +90,15 @@ impl TemplateApp {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
 
-        Default::default()
+        Self {
+            timer: Timer::new_running(&cc.egui_ctx),
+            label: "Dummy text".into(),
+            value: 270,
+        }
     }
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for TTUmpire {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -66,6 +129,11 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            let t = self.timer.elapsed(ctx) as u32;
+            if ui.label(format!("{}:{:02}", t/60, t%60)).clicked() {
+                self.timer.toggle(ctx);
+            }
+
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("eframe template");
 
@@ -74,11 +142,10 @@ impl eframe::App for TemplateApp {
                 ui.text_edit_singleline(&mut self.label);
             });
 
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
+            ui.add(egui::Slider::new(&mut self.value, 0..=1000).text("value"));
             if ui.button("Increment").clicked() {
-                self.value += 1.0;
+                self.value += 10;
             }
-
             ui.separator();
 
             ui.add(egui::github_link_file!(
@@ -91,6 +158,7 @@ impl eframe::App for TemplateApp {
                 egui::warn_if_debug_build(ui);
             });
         });
+        ctx.request_repaint_after(std::time::Duration::from_millis(self.value));
     }
 }
 
