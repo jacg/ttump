@@ -1,56 +1,91 @@
-use egui::Context;
+use egui::{Context, Ui};
 
-pub enum Timer {
-    Running {
-        dt: f32,
-        t0: f32,
-    },
-    Paused(f32),
+#[derive(Debug, Clone, Copy)]
+pub struct Timer {
+    countdown_from: Option<f32>,
+    running_since: Option<f32>,
+    elapsed_previous: f32,
+}
+
+impl Timer {
+
+    fn new_running(ctx: &Context) -> Self {
+        Self { running_since: Some(time(ctx)), .. Self::new_paused()}
+    }
+
+    fn new_countdown_running(minutes: u32, ctx: &Context) -> Self {
+        Self { running_since: Some(time(ctx)), .. Self::new_countdown_paused(minutes)}
+    }
+
+    fn new_paused() -> Self {
+        Self { running_since: None, elapsed_previous: 0.0, countdown_from: None }
+    }
+
+    fn new_countdown_paused(minutes: u32) -> Self {
+        Self { running_since: None, elapsed_previous: 0.0, countdown_from: Some((minutes * 60) as f32) }
+    }
+
+    fn toggle(&mut self, ctx: &Context) {
+        if let Some(start) = self.running_since {
+            let dt = time(ctx) - start;
+            self.running_since = None;
+            self.elapsed_previous += dt;
+        } else {
+            self.running_since = Some(time(ctx));
+        }
+    }
+
+    fn pause(&mut self, ctx: &Context) {
+        if self.running_since.is_some() {
+            self.toggle(ctx);
+        }
+    }
+
+    fn resume(&mut self, ctx: &Context) {
+        if self.running_since.is_none() {
+            self.toggle(ctx);
+        }
+    }
+
+    fn display(&self, ctx: &Context) -> String {
+        let total_elapsed = self.elapsed(ctx);
+        let mut t = if let Some(start) = self.countdown_from {
+            start - total_elapsed
+        } else {
+            total_elapsed
+        } as i32;
+        if t < 0 { t = - t; }
+        format!("{}:{:02}", t / 60, t % 60)
+    }
+
+
+    fn expired(&self, ctx: &Context) -> bool {
+        if let Some(start) = self.countdown_from {
+            return self.elapsed(ctx) > start
+        }
+        false
+    }
+
+    fn elapsed(&self, ctx: &Context) -> f32 {
+        self.elapsed_previous + self.running_since.map_or(0.0, |t| time(ctx) - t)
+    }
 }
 
 fn time(ctx: &Context) -> f32 {
     ctx.input(|i| i.time) as _
 }
 
-impl Timer {
-
-    fn new_running(ctx: &Context) -> Self {
-        Self::Running { dt: 0.0, t0: ctx.input(|i| i.time as _)
-        }
-    }
-
-    fn new_paused () -> Self { Self::Paused (0.0) }
-
-    fn toggle(&mut self, ctx: &Context) {
-        match *self {
-            Timer::Running { dt, t0 } => *self = Timer::Paused(dt + time(ctx) - t0),
-            Timer::Paused(dt) => *self = Timer::Running { dt, t0: time(ctx)  },
-        }
-    }
-
-    fn pause(&mut self, ctx: &Context) {
-        match *self {
-            Timer::Paused(_) => (),
-            Timer::Running { .. } => self.toggle(ctx),
-        }
-    }
-
-    fn resume(&mut self, ctx: &Context) {
-        match *self {
-            Timer::Running{..} => (),
-            Timer::Paused(_) => self.toggle(ctx),
-        }
-    }
-
-    fn elapsed(&self, ctx: &Context) -> f32 {
-        match *self {
-            Timer::Running { dt, t0 } =>  dt + time(ctx) - t0,
-            Timer::Paused (t) => t,
-        }
-    }
-
-
+enum State {
+    AwaitingPlayers, // WarmUp
+    WarmUp(Timer), // WarmUp finished
+    Paused(Timer),     // Play, TimeOut, MedicalTimeOut
+    Playing(Timer),    // Pause, TimeOut, (MedicalTimeOut)
+    TimeOut{ timer: Timer, set_duration: Timer, kind: TimeOutKind }, // Resume, (Medical)
+    BetweenSets(Timer), // Resume, (Finish)
 }
+
+#[derive(Debug, PartialEq, Eq)]
+enum TimeOutKind { Tactical, Medical }
 
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -58,7 +93,7 @@ impl Timer {
 pub struct TTUmpire {
 
     #[serde(skip)]
-    timer: Timer,
+    state: State,
 
     // Example stuff:
     label: String,
@@ -70,10 +105,10 @@ pub struct TTUmpire {
 impl Default for TTUmpire {
     fn default() -> Self {
         Self {
-            timer: Timer::new_paused(),
+            state: State::AwaitingPlayers,
             // Example stuff:
             label: "Hello World!".to_owned(),
-            value: 270,
+            value: 1000,
         }
     }
 }
@@ -90,11 +125,7 @@ impl TTUmpire {
             return eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         }
 
-        Self {
-            timer: Timer::new_running(&cc.egui_ctx),
-            label: "Dummy text".into(),
-            value: 270,
-        }
+        Default::default()
     }
 }
 
@@ -129,9 +160,74 @@ impl eframe::App for TTUmpire {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let t = self.timer.elapsed(ctx) as u32;
-            if ui.label(format!("{}:{:02}", t/60, t%60)).clicked() {
-                self.timer.toggle(ctx);
+            macro_rules! repaint { () => { ctx.request_repaint_after(std::time::Duration::from_millis(self.value)); }; }
+            macro_rules! timeout {
+                ($timer:ident $kind:ident $minutes:expr) => {
+                    State::TimeOut { timer: Timer::new_countdown_running($minutes, ctx), set_duration: $timer, kind: TimeOutKind::$kind }
+                };
+            }
+
+            match &mut self.state {
+                State::AwaitingPlayers => {
+                    ui.label("Awaiting players");
+                    if ui.button("Start warm-up").clicked() {
+                        self.state = State::WarmUp(Timer::new_countdown_running(2, ctx));
+                    }
+                }
+                State::WarmUp(timer) => {
+                    ui.label("Warm-up");
+                    ui.label(timer.display(ctx));
+                    if ui.button("Start first set").clicked() {
+                        self.state = State::Playing(Timer::new_running(ctx));
+                    }
+                    repaint!();
+                }
+                State::Playing(timer) => {
+                    ui.label("Playing");
+                    ui.label(timer.display(ctx));
+                    let pause   = ui.button("Pause")            .clicked();
+                    let timeout = ui.button("Time-out")         .clicked();
+                    let medical = ui.button("Medical time-out") .clicked();
+                    let finish  = ui.button("Set finished")     .clicked();
+                    if pause || timeout || medical {
+                        timer.pause(ctx);
+                    }
+                    let timer = *timer;
+                    if      pause   { self.state = State::Paused(timer) }
+                    else if timeout { self.state = timeout!(timer Tactical 1) }
+                    else if medical { self.state = timeout!(timer Medical 10) }
+                    else if finish  { self.state = State::BetweenSets(Timer::new_countdown_running(1, ctx)) }
+                    repaint!();
+                }
+                State::Paused(timer) => {
+                    ui.label("Paused");
+                    ui.label(timer.display(ctx));
+                    let play    = ui.button("Play")             .clicked();
+                    let timeout = ui.button("Time-out")         .clicked();
+                    let medical = ui.button("Medical time-out") .clicked();
+                    if play                    { timer.resume(ctx) }
+                    else if timeout || medical { timer.pause (ctx) }
+                    let timer = *timer;
+                    if      play    { self.state = State::Playing(timer) }
+                    else if timeout { self.state = timeout!(timer Tactical 1) }
+                         if medical { self.state = timeout!(timer Medical 10) }
+                }
+                State::TimeOut { timer, kind, set_duration } => {
+                    ui.label(if *kind == TimeOutKind::Medical {"Medical Time-out"} else {"Time-out"});
+                    ui.label(timer.display(ctx));
+                    if ui.button("Play").clicked() {
+                        set_duration.resume(ctx);
+                        self.state = State::Playing(*set_duration);
+                    }
+                    repaint!();
+                }
+                State::BetweenSets(timer)  => {
+                    ui.label("Pause between sets");
+                    ui.label(timer.display(ctx));
+                    if ui.button("Play")          .clicked() { self.state = State::Playing(Timer::new_running(ctx)) }
+                    if ui.button("Match finished").clicked() { self.state = State::AwaitingPlayers }
+                    repaint!();
+                }
             }
 
             // The central panel the region left after adding TopPanel's and SidePanel's
@@ -158,11 +254,11 @@ impl eframe::App for TTUmpire {
                 egui::warn_if_debug_build(ui);
             });
         });
-        ctx.request_repaint_after(std::time::Duration::from_millis(self.value));
+
     }
 }
 
-fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
+fn powered_by_egui_and_eframe(ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.label("Powered by ");
