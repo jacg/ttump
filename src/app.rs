@@ -129,6 +129,11 @@ impl TTUmpire {
     }
 }
 
+macro_rules! cols {
+    ($a:ident          ) => { ClockColors { default: Color32::$a, expired: None } };
+    ($a:ident, $b:ident) => { ClockColors { default: Color32::$a, expired: Some(Color32::$b) } };
+}
+
 impl eframe::App for TTUmpire {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -186,7 +191,7 @@ impl eframe::App for TTUmpire {
                     ui.vertical_centered(|ui| {
                         header(ui, "Warm-up");
                         ui.add_space(HEAD_CLOCK_SEP);
-                        clock(ui, ctx, timer);
+                        clock(ui, ctx, timer, cols!(LIGHT_BLUE, RED));
                         ui.add_space(CLOCK_BUTTON_SEP);
                         if button(ui, "Start match").clicked() {
                             self.state = State::Playing(Timer::new_running(ctx));
@@ -202,7 +207,7 @@ impl eframe::App for TTUmpire {
                     ui.vertical_centered(|ui| {
                         header(ui, "Playing");
                         ui.add_space(HEAD_CLOCK_SEP);
-                        clock(ui, ctx, *timer);
+                        clock(ui, ctx, *timer, cols!(GREEN, RED));
                         ui.add_space(CLOCK_BUTTON_SEP);
                         pause   = button(ui, "Pause")            .clicked();
                         ui.add_space(BUTTON_SEP);
@@ -229,7 +234,7 @@ impl eframe::App for TTUmpire {
                     ui.vertical_centered(|ui| {
                         header(ui, "Paused");
                         ui.add_space(HEAD_CLOCK_SEP);
-                        clock(ui, ctx, *timer);
+                        clock(ui, ctx, *timer, cols!(ORANGE));
                         ui.add_space(CLOCK_BUTTON_SEP);
                         play    = button(ui, "Play")             .clicked();
                         ui.add_space(BUTTON_SEP);
@@ -248,7 +253,7 @@ impl eframe::App for TTUmpire {
                     if ui.vertical_centered(|ui| {
                         header(ui, if *kind == TimeOutKind::Medical {"Medical Time-out"} else {"Time-out"});
                         ui.add_space(HEAD_CLOCK_SEP);
-                        clock(ui, ctx, *timer);
+                        clock(ui, ctx, *timer, cols!(LIGHT_BLUE, RED));
                         ui.add_space(CLOCK_BUTTON_SEP);
                         button(ui, "Play")
                     }).inner.clicked() {
@@ -263,7 +268,7 @@ impl eframe::App for TTUmpire {
                     ui.vertical_centered(|ui| {
                         header(ui, "Pause between sets");
                         ui.add_space(HEAD_CLOCK_SEP);
-                        clock(ui, ctx, *timer);
+                        clock(ui, ctx, *timer, cols!(LIGHT_BLUE, RED));
                         ui.add_space(CLOCK_BUTTON_SEP);
                         if button(ui, "Play")          .clicked() { play = true; }
                         ui.add_space(BUTTON_SEP);
@@ -297,9 +302,18 @@ fn header(ui: &mut Ui, text: impl Into<String>) -> Response {
     ui.label(rich(text).size(50.0))
 }
 
-fn clock(ui: &mut Ui, ctx: &Context, timer: Timer) -> Response {
-    let late = timer.expired(ctx);
-    let color = if late { Color32::RED } else { Color32::GREEN };
+fn clock(ui: &mut Ui, ctx: &Context, timer: Timer, cols: ClockColors) -> Response {
+    let mut color = cols.default;
+    if let Some(expired_color) = cols.expired {
+        if timer.expired(ctx) {
+            color = expired_color;
+        }
+    }
     let text = timer.display(ctx);
     ui.label(rich(text).size(80.0).color(color))
+}
+
+struct ClockColors {
+    default: Color32,
+    expired: Option<Color32>,
 }
