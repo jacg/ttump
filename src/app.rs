@@ -1,4 +1,4 @@
-use egui::{Context, Ui};
+use egui::{Button, Color32, Context, Response, RichText, Rounding, Ui, Widget};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Timer {
@@ -169,26 +169,26 @@ impl eframe::App for TTUmpire {
 
             match &mut self.state {
                 State::AwaitingPlayers => {
-                    ui.label("Awaiting players");
-                    if ui.button("Start warm-up").clicked() {
+                    header(ui, "Awaiting players");
+                    if button(ui, "Start warm-up").clicked() {
                         self.state = State::WarmUp(Timer::new_countdown_running(2, ctx));
                     }
                 }
                 State::WarmUp(timer) => {
-                    ui.label("Warm-up");
-                    ui.label(timer.display(ctx));
-                    if ui.button("Start first set").clicked() {
+                    header(ui, "Warm-up");
+                    clock(ui, ctx, timer);
+                    if button(ui, "Start first set").clicked() {
                         self.state = State::Playing(Timer::new_running(ctx));
                     }
                     repaint!();
                 }
                 State::Playing(timer) => {
-                    ui.label("Playing");
-                    ui.label(timer.display(ctx));
-                    let pause   = ui.button("Pause")            .clicked();
-                    let timeout = ui.button("Time-out")         .clicked();
-                    let medical = ui.button("Medical time-out") .clicked();
-                    let finish  = ui.button("Set finished")     .clicked();
+                    header(ui, "Playing");
+                    clock(ui, ctx, timer);
+                    let pause   = button(ui, "Pause")            .clicked();
+                    let timeout = button(ui, "Time-out")         .clicked();
+                    let medical = button(ui, "Medical time-out") .clicked();
+                    let finish  = button(ui, "Set finished")     .clicked();
                     if pause || timeout || medical {
                         timer.pause(ctx);
                     }
@@ -200,11 +200,11 @@ impl eframe::App for TTUmpire {
                     repaint!();
                 }
                 State::Paused(timer) => {
-                    ui.label("Paused");
-                    ui.label(timer.display(ctx));
-                    let play    = ui.button("Play")             .clicked();
-                    let timeout = ui.button("Time-out")         .clicked();
-                    let medical = ui.button("Medical time-out") .clicked();
+                    header(ui, "Paused");
+                    clock(ui, ctx, timer);
+                    let play    = button(ui, "Play")             .clicked();
+                    let timeout = button(ui, "Time-out")         .clicked();
+                    let medical = button(ui, "Medical time-out") .clicked();
                     if play                    { timer.resume(ctx) }
                     else if timeout || medical { timer.pause (ctx) }
                     let timer = *timer;
@@ -213,19 +213,19 @@ impl eframe::App for TTUmpire {
                          if medical { self.state = timeout!(timer Medical 10) }
                 }
                 State::TimeOut { timer, kind, set_duration } => {
-                    ui.label(if *kind == TimeOutKind::Medical {"Medical Time-out"} else {"Time-out"});
-                    ui.label(timer.display(ctx));
-                    if ui.button("Play").clicked() {
+                    header(ui, if *kind == TimeOutKind::Medical {"Medical Time-out"} else {"Time-out"});
+                    clock(ui, ctx, timer);
+                    if button(ui, "Play").clicked() {
                         set_duration.resume(ctx);
                         self.state = State::Playing(*set_duration);
                     }
                     repaint!();
                 }
                 State::BetweenSets(timer)  => {
-                    ui.label("Pause between sets");
-                    ui.label(timer.display(ctx));
-                    if ui.button("Play")          .clicked() { self.state = State::Playing(Timer::new_running(ctx)) }
-                    if ui.button("Match finished").clicked() { self.state = State::AwaitingPlayers }
+                    header(ui, "Pause between sets");
+                    clock(ui, ctx, timer);
+                    if button(ui, "Play")          .clicked() { self.state = State::Playing(Timer::new_running(ctx)) }
+                    if button(ui, "Match finished").clicked() { self.state = State::AwaitingPlayers }
                     repaint!();
                 }
             }
@@ -270,4 +270,25 @@ fn powered_by_egui_and_eframe(ui: &mut Ui) {
         );
         ui.label(".");
     });
+}
+
+fn rich(text: impl Into<String>) -> RichText {
+    RichText::new(text)
+}
+
+fn button(ui: &mut Ui, text: impl Into<String>) -> Response {
+    Button::new(rich(text).size(30.0))
+        .rounding(Rounding::same(13.0))
+        .ui(ui)
+}
+
+fn header(ui: &mut Ui, text: impl Into<String>) -> Response {
+    ui.label(rich(text).size(50.0))
+}
+
+fn clock(ui: &mut Ui, ctx: &Context, timer: &Timer) -> Response {
+    let late = timer.expired(ctx);
+    let color = if late { Color32::RED } else { Color32::GREEN };
+    let text = timer.display(ctx);
+    ui.label(rich(text).size(80.0).color(color))
 }
