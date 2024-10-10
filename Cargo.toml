@@ -1,5 +1,5 @@
 [package]
-name = "ttump"
+name = "ttumpire"
 version = "0.1.0"
 authors = ["Jacek Generowicz <jacg@my-post-office.net>"]
 edition = "2021"
